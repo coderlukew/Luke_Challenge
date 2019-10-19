@@ -1,0 +1,268 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  vpc01583ecc607b06697:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      InstanceTenancy: default
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+      - Key: Network
+        Value: Public
+      - Key: UserId
+        Value: sloth
+      - Key: Application
+        Value: cfst-1449-092e7ca5334a98c4e000347fdee7188f
+  subnet0e890506b72431427:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a
+      VpcId:
+        Ref: vpc01583ecc607b06697
+      Tags:
+      - Key: Name
+        Value: us-east1a
+  subnet0bfb0ebcee9ffab98:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1f
+      VpcId:
+        Ref: vpc01583ecc607b06697
+      Tags:
+      - Key: Name
+        Value: us-east1f
+  igw0bd67dca9b6c6b062:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: IGW
+  dopt07f8878ae59c9a560:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: ec2.internal
+      DomainNameServers:
+      - AmazonProvidedDNS
+  acl0452b6bda6f44ed6c:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId:
+        Ref: vpc01583ecc607b06697
+  rtb0b86c38b63b469991:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: vpc01583ecc607b06697
+  applicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: WebserverLB
+      Scheme: internet-facing
+      SecurityGroups:
+      - Ref: sgLoadBalancers
+      Subnets:
+      - Ref: subnet0e890506b72431427
+      - Ref: subnet0bfb0ebcee9ffab98
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: redirect
+        RedirectConfig:
+          Protocol: HTTPS
+          Port: 443
+          Host: "#{host}"
+          Path: "/#{path}"
+          Query: "#{query}"
+          StatusCode: HTTP_301
+      LoadBalancerArn: !Ref applicationLoadBalancer 
+      Port: 80
+      Protocol: HTTP
+  asgWebServersASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+      - us-east-1a
+      - us-east-1f
+      Cooldown: '300'
+      DesiredCapacity: '1'
+      HealthCheckGracePeriod: '300'
+      HealthCheckType: EC2
+      MaxSize: '100'
+      MinSize: '1'
+      TargetGroupARNs:
+      - Ref: targetgroup
+      VPCZoneIdentifier:
+      - Ref: subnet0e890506b72431427
+      - Ref: subnet0bfb0ebcee9ffab98
+      LaunchConfigurationName:
+        Ref: lcWebServersASGlc
+      TerminationPolicies:
+      - Default
+  lcWebServersASGlc:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: ami-0b69ea66ff7391e80
+      InstanceType: t2.micro
+      SecurityGroups:
+      - Ref: sgWebServers
+      BlockDeviceMappings:
+      - DeviceName: "/dev/xvda"
+        Ebs:
+          SnapshotId: snap-0e4c15b8cba3e8ae6
+          VolumeSize: 8
+      UserData:
+        Fn::Base64:
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          usermod -a -G apache ec2-user
+          chown -R ec2-user:apache /var/www
+          chmod 2775 /var/www
+          find /var/www -type d -exec chmod 2775 {} \;
+          find /var/www -type f -exec chmod 0664 {} \;
+          echo "<html>
+          <head>
+          <title>Hello World</title>
+          </head>
+          <body>
+          <h1>Hello World!</h1>
+          </body>
+          </html>" > /var/www/html/index.html
+  sgWebServers:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows HTTP/s
+      VpcId:
+        Ref: vpc01583ecc607b06697
+  sgLoadBalancers:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows HTTP/s
+      VpcId:
+        Ref: vpc01583ecc607b06697
+  scalingScaleGroupSize:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      PolicyType: SimpleScaling
+      Cooldown: 60
+      ScalingAdjustment: 1
+      AutoScalingGroupName:
+        Ref: asgWebServersASG
+  targetgroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      Name: WebserverTSG
+      TargetType: instance
+      Protocol: HTTP
+      Port: 80
+      VpcId: 
+        Ref: vpc01583ecc607b06697 
+
+  acl1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      Protocol: "-1"
+      RuleAction: allow
+      RuleNumber: '100'
+      NetworkAclId:
+        Ref: acl0452b6bda6f44ed6c
+  acl2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Protocol: "-1"
+      RuleAction: allow
+      RuleNumber: '100'
+      NetworkAclId:
+        Ref: acl0452b6bda6f44ed6c
+  subnetacl1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId:
+        Ref: acl0452b6bda6f44ed6c
+      SubnetId:
+        Ref: subnet0e890506b72431427
+  subnetacl2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      NetworkAclId:
+        Ref: acl0452b6bda6f44ed6c
+      SubnetId:
+        Ref: subnet0bfb0ebcee9ffab98
+  gw1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: vpc01583ecc607b06697
+      InternetGatewayId:
+        Ref: igw0bd67dca9b6c6b062
+  dchpassoc1:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId:
+        Ref: vpc01583ecc607b06697
+      DhcpOptionsId:
+        Ref: dopt07f8878ae59c9a560
+  ingress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgWebServers
+      IpProtocol: tcp
+      FromPort: '80'
+      ToPort: '80'
+      CidrIp: 0.0.0.0/0
+  ingress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgWebServers
+      IpProtocol: tcp
+      FromPort: '443'
+      ToPort: '443'
+      CidrIp: 0.0.0.0/0
+  ingress3:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgLoadBalancers
+      IpProtocol: tcp
+      FromPort: '80'
+      ToPort: '80'
+      CidrIp: 0.0.0.0/0
+  ingress4:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgLoadBalancers
+      IpProtocol: tcp
+      FromPort: '443'
+      ToPort: '443'
+      CidrIp: 0.0.0.0/0
+  egress1:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: sgWebServers
+      IpProtocol: "-1"
+      CidrIp: 0.0.0.0/0
+  egress2:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: sgLoadBalancers
+      IpProtocol: "-1"
+      CidrIp: 0.0.0.0/0
+Description: Luke Winnington's AWS webserver template.
